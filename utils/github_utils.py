@@ -45,11 +45,14 @@ class GitHubManager:
     def create_file(self, repo, path, content, message, branch="main"):
         """Create or update a file in the repository"""
         try:
-            # Ensure content is properly encoded
+            # PyGithub requires base64 encoded content for create_file and update_file
             import base64
             if isinstance(content, str):
-                # Content is already a string, encode it to base64
+                # Encode string content to base64
                 content = base64.b64encode(content.encode('utf-8')).decode('utf-8')
+            elif isinstance(content, bytes):
+                # Encode bytes content to base64
+                content = base64.b64encode(content).decode('utf-8')
             
             # Check if file exists
             try:
