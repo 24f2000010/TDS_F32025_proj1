@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Database models and connection for PostgreSQL on Render
+Database models and connection for local SQLite database on Render
 """
 
 import os
@@ -13,14 +13,20 @@ from dotenv import load_dotenv
 # Load environment variables
 load_dotenv()
 
-# Database URL from Render environment variable
-DATABASE_URL = os.getenv('DATABASE_URL')
+# Use local SQLite database on Render machine
+# Store in /tmp directory for persistence across deployments
+db_path = "/tmp/app_builder.db"
+DATABASE_URL = f"sqlite:///{db_path}"
 
-if not DATABASE_URL:
-    raise ValueError("DATABASE_URL environment variable is required for production deployment")
+print(f"Using local SQLite database at: {db_path}")
 
-# Create engine
-engine = create_engine(DATABASE_URL, echo=False)
+# Create engine with connection pooling for better performance
+engine = create_engine(
+    DATABASE_URL, 
+    echo=False,
+    pool_pre_ping=True,  # Verify connections before use
+    pool_recycle=300     # Recycle connections every 5 minutes
+)
 
 # Create session factory
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
