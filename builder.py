@@ -217,31 +217,41 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
         """Enable GitHub Pages for the repository"""
         return self.github_manager.enable_pages(repo)
     
-    def notify_evaluation(self, evaluation_url, data, max_retries=3):
-        """Notify evaluation endpoint with exponential backoff"""
-        def make_notification_request():
-            response = requests.post(
-                evaluation_url,
-                json=data,
-                headers={'Content-Type': 'application/json'},
-                timeout=30
-            )
-            response.raise_for_status()
-            return response
+    def notify_evaluation(self, evaluation_url, data, max_retries=5):
+        """Notify evaluation endpoint with exponential backoff retry logic"""
+        import time
         
-        try:
-            response = requests.post(
-                evaluation_url,
-                json=data,
-                headers={'Content-Type': 'application/json'},
-                timeout=30
-            )
-            response.raise_for_status()
-            logger.info("Successfully notified evaluation endpoint")
-            return True
-        except Exception as e:
-            logger.error(f"Failed to notify evaluation endpoint: {str(e)}")
-            return False
+        for attempt in range(max_retries):
+            try:
+                logger.info(f"Notifying evaluation endpoint (attempt {attempt + 1}/{max_retries})")
+                
+                response = requests.post(
+                    evaluation_url,
+                    json=data,
+                    headers={'Content-Type': 'application/json'},
+                    timeout=30
+                )
+                
+                # Check for HTTP 200 response
+                if response.status_code == 200:
+                    logger.info("Successfully notified evaluation endpoint")
+                    return True
+                else:
+                    logger.warning(f"Evaluation endpoint returned status {response.status_code}: {response.text}")
+                    
+            except requests.exceptions.RequestException as e:
+                logger.error(f"Request failed on attempt {attempt + 1}: {str(e)}")
+            except Exception as e:
+                logger.error(f"Unexpected error on attempt {attempt + 1}: {str(e)}")
+            
+            # If not the last attempt, wait with exponential backoff
+            if attempt < max_retries - 1:
+                delay = 2 ** attempt  # 1, 2, 4, 8 seconds
+                logger.info(f"Retrying in {delay} seconds...")
+                time.sleep(delay)
+        
+        logger.error(f"Failed to notify evaluation endpoint after {max_retries} attempts")
+        return False
     
     def build_app(self, request_data):
         """Main method to build the application"""
