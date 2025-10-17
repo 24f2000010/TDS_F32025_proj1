@@ -45,14 +45,13 @@ class GitHubManager:
     def create_file(self, repo, path, content, message, branch="main"):
         """Create or update a file in the repository"""
         try:
-            # PyGithub requires base64 encoded content for create_file and update_file
+            # PyGithub handles base64 encoding automatically for string content
+            # For bytes content, we need to encode it ourselves
             import base64
-            if isinstance(content, str):
-                # Encode string content to base64
-                content = base64.b64encode(content.encode('utf-8')).decode('utf-8')
-            elif isinstance(content, bytes):
+            if isinstance(content, bytes):
                 # Encode bytes content to base64
                 content = base64.b64encode(content).decode('utf-8')
+            # For strings, PyGithub handles the encoding automatically
             
             # Check if file exists
             try:
@@ -133,25 +132,9 @@ class GitHubManager:
             
             for file_path, content in files.items():
                 try:
-                    # Check if file exists
-                    try:
-                        existing_file = repo.get_contents(file_path)
-                        # File exists, update it
-                        repo.update_file(
-                            path=file_path,
-                            message=commit_message,
-                            content=content,
-                            sha=existing_file.sha
-                        )
-                        logger.info(f"Updated file: {file_path}")
-                    except GithubException:
-                        # File doesn't exist, create it
-                        repo.create_file(
-                            path=file_path,
-                            message=commit_message,
-                            content=content
-                        )
-                        logger.info(f"Created file: {file_path}")
+                    # Use the create_file method which handles encoding properly
+                    if not self.create_file(repo, file_path, content, commit_message):
+                        success = False
                     
                     # Get the latest commit SHA
                     commit_sha = repo.get_commits()[0].sha
