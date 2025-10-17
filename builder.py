@@ -278,7 +278,7 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
                 if round_num == 1:
                     return self._handle_round1(db, request_data)
                 else:
-                    return self._handle_round2(db, request_data)
+                    return self._handle_round2_with_fallback(db, request_data)
             finally:
                 db.close()
                 
@@ -301,7 +301,27 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
             
             logger.info(f"Handling Round 1 for task: {task}")
             
-            # Store request in database
+            # Check if this task already exists in Round 1 - if so, delete old data
+            existing_request = db.query(AppRequest).filter(
+                AppRequest.task == task,
+                AppRequest.round_num == 1
+            ).first()
+            
+            if existing_request:
+                logger.info(f"Found existing Round 1 data for task {task}, cleaning up...")
+                # Delete existing Round 1 data
+                db.query(AppRequest).filter(
+                    AppRequest.task == task,
+                    AppRequest.round_num == 1
+                ).delete()
+                db.query(LLMResponse).filter(
+                    LLMResponse.task == task,
+                    LLMResponse.round_num == 1
+                ).delete()
+                db.commit()
+                logger.info(f"Cleaned up existing Round 1 data for task {task}")
+            
+            # Store new request in database
             app_request = AppRequest(
                 email=email,
                 task=task,
@@ -338,13 +358,13 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
                 # Prepare files for commit
                 pages_url = self.github_manager.get_pages_url(repo.name)
                 files_to_commit = {
-                    'index.html': base64.b64encode(generated_code.encode('utf-8')).decode('utf-8'),
-                    'LICENSE': base64.b64encode(self.create_mit_license().encode('utf-8')).decode('utf-8'),
-                    'README.md': base64.b64encode(self.create_readme(
+                    'index.html': generated_code,
+                    'LICENSE': self.create_mit_license(),
+                    'README.md': self.create_readme(
                         task, brief, round_num, 
                         repo.html_url, 
                         pages_url
-                    ).encode('utf-8')).decode('utf-8')
+                    )
                 }
                 
                 # Add processed attachments to files to commit
@@ -353,14 +373,13 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
                         with open(attachment['path'], 'rb') as f:
                             file_content = f.read()
                         
-                        # PyGithub expects all content to be base64 encoded strings
-                        # For text files, we can decode first then encode, or encode directly
+                        # Convert binary content to string for text files, keep binary for others
                         if attachment['mime_type'].startswith('text/') or attachment['name'].endswith('.json'):
-                            # For text files, decode to string first, then encode to base64
-                            files_to_commit[attachment['name']] = base64.b64encode(file_content).decode('utf-8')
+                            # For text files, decode to string
+                            files_to_commit[attachment['name']] = file_content.decode('utf-8')
                         else:
-                            # For binary files, encode directly to base64
-                            files_to_commit[attachment['name']] = base64.b64encode(file_content).decode('utf-8')
+                            # For binary files, keep as bytes (github_utils will handle encoding)
+                            files_to_commit[attachment['name']] = file_content
                         
                         logger.info(f"Added attachment to commit: {attachment['name']} ({attachment['mime_type']})")
                     except Exception as e:
@@ -501,12 +520,12 @@ Please update the existing application to include the new requirements while mai
                 
                 # Prepare files for update
                 files_to_update = {
-                    'index.html': base64.b64encode(updated_code.encode('utf-8')).decode('utf-8'),
-                    'README.md': base64.b64encode(self.create_readme(
+                    'index.html': updated_code,
+                    'README.md': self.create_readme(
                         task, combined_brief, round_num, 
                         repo_url, 
                         pages_url
-                    ).encode('utf-8')).decode('utf-8')
+                    )
                 }
                 
                 # Add processed attachments to files to update
@@ -515,10 +534,13 @@ Please update the existing application to include the new requirements while mai
                         with open(attachment['path'], 'rb') as f:
                             file_content = f.read()
                         
+                        # Convert binary content to string for text files, keep binary for others
                         if attachment['mime_type'].startswith('text/') or attachment['name'].endswith('.json'):
-                            files_to_update[attachment['name']] = base64.b64encode(file_content).decode('utf-8')
+                            # For text files, decode to string
+                            files_to_update[attachment['name']] = file_content.decode('utf-8')
                         else:
-                            files_to_update[attachment['name']] = base64.b64encode(file_content).decode('utf-8')
+                            # For binary files, keep as bytes (github_utils will handle encoding)
+                            files_to_update[attachment['name']] = file_content
                         
                         logger.info(f"Added attachment to update: {attachment['name']} ({attachment['mime_type']})")
                     except Exception as e:
@@ -566,6 +588,158 @@ Please update the existing application to include the new requirements while mai
                 
         except Exception as e:
             logger.error(f"Error in round 2: {str(e)}")
+            return False
+
+    def _handle_round2_with_fallback(self, db, request_data):
+        """Handle round 2 with fallback to create new repo if Round 1 data is missing"""
+        try:
+            email = request_data['email']
+            task = request_data['task']
+            round_num = request_data['round']
+            nonce = request_data['nonce']
+            brief = request_data['brief']
+            checks = request_data['checks']
+            evaluation_url = request_data['evaluation_url']
+            attachments = request_data.get('attachments', [])
+            secret = request_data.get('secret', '')
+            
+            logger.info(f"Handling Round 2 with fallback for task: {task}")
+            
+            # Try to find round 1 data
+            round1_request = db.query(AppRequest).filter(
+                AppRequest.task.ilike(task),
+                AppRequest.round_num == 1
+            ).first()
+            
+            round1_response = db.query(LLMResponse).filter(
+                LLMResponse.task.ilike(task),
+                LLMResponse.round_num == 1
+            ).first()
+            
+            logger.info(f"Round 1 request found: {round1_request is not None}")
+            logger.info(f"Round 1 response found: {round1_response is not None}")
+            
+            # If Round 1 data is missing, fallback to creating new repo
+            if not round1_request or not round1_response:
+                logger.warning(f"Round 1 data not found for task: {task}, falling back to create new repo")
+                
+                # Store round 2 request as if it's round 1 (fallback)
+                app_request = AppRequest(
+                    email=email,
+                    task=task,
+                    round_num=1,  # Store as round 1 for fallback
+                    nonce=nonce,
+                    brief=brief,
+                    checks=checks,
+                    evaluation_url=evaluation_url,
+                    attachments=attachments,
+                    secret=secret
+                )
+                db.add(app_request)
+                db.commit()
+                
+                # Create temporary directory for processing
+                with tempfile.TemporaryDirectory() as temp_dir:
+                    # Process attachments
+                    processed_attachments = self.process_attachments(attachments, temp_dir)
+                    
+                    # Generate code using AI (treat as round 1)
+                    generated_code = self.generate_code_with_ai(brief, attachments, 1)
+                    
+                    if not generated_code:
+                        logger.error("Failed to generate code in fallback")
+                        return False
+                    
+                    # Create new GitHub repository
+                    repo = self.create_github_repo(task, is_round_2=False)
+                    
+                    if not repo:
+                        logger.error("Failed to create GitHub repository in fallback")
+                        return False
+                    
+                    # Prepare files for commit
+                    files_to_commit = {
+                        'index.html': generated_code,
+                        'LICENSE': self.create_mit_license(),
+                        'README.md': self.create_readme(
+                            task, brief, 1, 
+                            repo.html_url, 
+                            f"https://{self.github_username}.github.io/{repo.name}/"
+                        )
+                    }
+                    
+                    # Add processed attachments to files to commit
+                    for attachment in processed_attachments:
+                        try:
+                            with open(attachment['path'], 'rb') as f:
+                                file_content = f.read()
+                            
+                            # Convert binary content to string for text files, keep binary for others
+                            if attachment['mime_type'].startswith('text/') or attachment['name'].endswith('.json'):
+                                # For text files, decode to string
+                                files_to_commit[attachment['name']] = file_content.decode('utf-8')
+                            else:
+                                # For binary files, keep as bytes (github_utils will handle encoding)
+                                files_to_commit[attachment['name']] = file_content
+                            
+                            logger.info(f"Added attachment to commit: {attachment['name']} ({attachment['mime_type']})")
+                        except Exception as e:
+                            logger.error(f"Error adding attachment {attachment['name']} to commit: {str(e)}")
+                    
+                    # Commit and push files
+                    commit_sha = self.commit_and_push(
+                        repo, 
+                        files_to_commit, 
+                        f"Initial commit for task {task} (Round 2 fallback)"
+                    )
+                    
+                    if not commit_sha:
+                        logger.error("Failed to commit files in fallback")
+                        return False
+                    
+                    # Enable GitHub Pages
+                    pages_url = self.enable_github_pages(repo)
+                    
+                    if not pages_url:
+                        logger.error("Failed to enable GitHub Pages in fallback")
+                        return False
+                    
+                    # Store LLM response in database
+                    llm_response = LLMResponse(
+                        task=task,
+                        round_num=1,  # Store as round 1 for fallback
+                        generated_code=generated_code,
+                        repo_url=repo.html_url,
+                        pages_url=pages_url,
+                        commit_sha=commit_sha
+                    )
+                    db.add(llm_response)
+                    db.commit()
+                    
+                    # Prepare evaluation data
+                    evaluation_data = {
+                        "email": email,
+                        "task": task,
+                        "round": 1,  # Report as round 1 for fallback
+                        "nonce": nonce,
+                        "repo_url": repo.html_url,
+                        "commit_sha": commit_sha,
+                        "pages_url": pages_url
+                    }
+                    
+                    # Notify evaluation endpoint
+                    self.notify_evaluation(evaluation_url, evaluation_data)
+                    
+                    logger.info(f"Successfully created new app in fallback for task: {task}")
+                    return True
+            
+            else:
+                # Normal Round 2 processing with existing data
+                logger.info("Found Round 1 data, proceeding with normal Round 2 processing")
+                return self._handle_round2(db, request_data)
+                
+        except Exception as e:
+            logger.error(f"Error in round 2 with fallback: {str(e)}")
             return False
 
 def main():
