@@ -56,6 +56,12 @@ logs/
 # Temporary files
 *.tmp
 *.temp
+temp_request_*.json
+
+# Database files
+*.db
+*.sqlite
+*.sqlite3
 
 # Vercel
 .vercel

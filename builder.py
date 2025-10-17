@@ -23,6 +23,7 @@ from dotenv import load_dotenv
 from utils.aipipe_utils import AIPipeClient
 from utils.github_utils import GitHubManager
 from utils.attachment_utils import AttachmentProcessor
+from database import get_db_session, AppRequest, LLMResponse, create_tables
 
 # Load environment variables
 load_dotenv()
@@ -217,31 +218,41 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
         """Enable GitHub Pages for the repository"""
         return self.github_manager.enable_pages(repo)
     
-    def notify_evaluation(self, evaluation_url, data, max_retries=3):
-        """Notify evaluation endpoint with exponential backoff"""
-        def make_notification_request():
-            response = requests.post(
-                evaluation_url,
-                json=data,
-                headers={'Content-Type': 'application/json'},
-                timeout=30
-            )
-            response.raise_for_status()
-            return response
+    def notify_evaluation(self, evaluation_url, data, max_retries=5):
+        """Notify evaluation endpoint with exponential backoff retry logic"""
+        import time
         
-        try:
-            response = requests.post(
-                evaluation_url,
-                json=data,
-                headers={'Content-Type': 'application/json'},
-                timeout=30
-            )
-            response.raise_for_status()
-            logger.info("Successfully notified evaluation endpoint")
-            return True
-        except Exception as e:
-            logger.error(f"Failed to notify evaluation endpoint: {str(e)}")
-            return False
+        for attempt in range(max_retries):
+            try:
+                logger.info(f"Notifying evaluation endpoint (attempt {attempt + 1}/{max_retries})")
+                
+                response = requests.post(
+                    evaluation_url,
+                    json=data,
+                    headers={'Content-Type': 'application/json'},
+                    timeout=30
+                )
+                
+                # Check for HTTP 200 response
+                if response.status_code == 200:
+                    logger.info("Successfully notified evaluation endpoint")
+                    return True
+                else:
+                    logger.warning(f"Evaluation endpoint returned status {response.status_code}: {response.text}")
+                    
+            except requests.exceptions.RequestException as e:
+                logger.error(f"Request failed on attempt {attempt + 1}: {str(e)}")
+            except Exception as e:
+                logger.error(f"Unexpected error on attempt {attempt + 1}: {str(e)}")
+            
+            # If not the last attempt, wait with exponential backoff
+            if attempt < max_retries - 1:
+                delay = 2 ** attempt  # 1, 2, 4, 8 seconds
+                logger.info(f"Retrying in {delay} seconds...")
+                time.sleep(delay)
+        
+        logger.error(f"Failed to notify evaluation endpoint after {max_retries} attempts")
+        return False
     
     def build_app(self, request_data):
         """Main method to build the application"""
@@ -255,23 +266,70 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
             checks = request_data['checks']
             evaluation_url = request_data['evaluation_url']
             attachments = request_data.get('attachments', [])
+            secret = request_data.get('secret', '')
             
             logger.info(f"Building app for task: {task}, round: {round_num}")
+            
+            # Initialize database
+            create_tables()
+            db = get_db_session()
+            
+            try:
+                if round_num == 1:
+                    return self._handle_round1(db, request_data)
+                else:
+                    return self._handle_round2(db, request_data)
+            finally:
+                db.close()
+                
+        except Exception as e:
+            logger.error(f"Error building app: {str(e)}")
+            return False
+    
+    def _handle_round1(self, db, request_data):
+        """Handle round 1 - create new app and store in database"""
+        try:
+            email = request_data['email']
+            task = request_data['task']
+            round_num = request_data['round']
+            nonce = request_data['nonce']
+            brief = request_data['brief']
+            checks = request_data['checks']
+            evaluation_url = request_data['evaluation_url']
+            attachments = request_data.get('attachments', [])
+            secret = request_data.get('secret', '')
+            
+            logger.info(f"Handling Round 1 for task: {task}")
+            
+            # Store request in database
+            app_request = AppRequest(
+                email=email,
+                task=task,
+                round_num=round_num,
+                nonce=nonce,
+                brief=brief,
+                checks=checks,
+                evaluation_url=evaluation_url,
+                attachments=attachments,
+                secret=secret
+            )
+            db.add(app_request)
+            db.commit()
             
             # Create temporary directory for processing
             with tempfile.TemporaryDirectory() as temp_dir:
                 # Process attachments
                 processed_attachments = self.process_attachments(attachments, temp_dir)
                 
-                # Generate code using AI (OpenAI preferred, AIPipe fallback)
+                # Generate code using AI
                 generated_code = self.generate_code_with_ai(brief, attachments, round_num)
                 
                 if not generated_code:
                     logger.error("Failed to generate code")
                     return False
                 
-                # Create or get GitHub repository
-                repo = self.create_github_repo(task, is_round_2=(round_num == 2))
+                # Create new GitHub repository
+                repo = self.create_github_repo(task, is_round_2=False)
                 
                 if not repo:
                     logger.error("Failed to create/get GitHub repository")
@@ -289,6 +347,25 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
                     )
                 }
                 
+                # Add processed attachments to files to commit
+                for attachment in processed_attachments:
+                    try:
+                        with open(attachment['path'], 'rb') as f:
+                            file_content = f.read()
+                        
+                        # PyGithub expects all content to be base64 encoded strings
+                        # For text files, we can decode first then encode, or encode directly
+                        if attachment['mime_type'].startswith('text/') or attachment['name'].endswith('.json'):
+                            # For text files, decode to string first, then encode to base64
+                            files_to_commit[attachment['name']] = base64.b64encode(file_content).decode('utf-8')
+                        else:
+                            # For binary files, encode directly to base64
+                            files_to_commit[attachment['name']] = base64.b64encode(file_content).decode('utf-8')
+                        
+                        logger.info(f"Added attachment to commit: {attachment['name']} ({attachment['mime_type']})")
+                    except Exception as e:
+                        logger.error(f"Error adding attachment {attachment['name']} to commit: {str(e)}")
+                
                 # Commit and push files
                 commit_sha = self.commit_and_push(
                     repo, 
@@ -302,6 +379,18 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
                 
                 # Enable GitHub Pages
                 self.enable_github_pages(repo)
+                
+                # Store LLM response in database
+                llm_response = LLMResponse(
+                    task=task,
+                    round_num=round_num,
+                    generated_code=generated_code,
+                    repo_url=repo.html_url,
+                    pages_url=pages_url,
+                    commit_sha=commit_sha
+                )
+                db.add(llm_response)
+                db.commit()
                 
                 # Prepare evaluation notification
                 evaluation_data = {
@@ -321,7 +410,151 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
                 return True
                 
         except Exception as e:
-            logger.error(f"Error building app: {str(e)}")
+            logger.error(f"Error in round 1: {str(e)}")
+            return False
+    
+    def _handle_round2(self, db, request_data):
+        """Handle round 2 - update existing app using database data"""
+        try:
+            email = request_data['email']
+            task = request_data['task']
+            round_num = request_data['round']
+            nonce = request_data['nonce']
+            brief = request_data['brief']
+            checks = request_data['checks']
+            evaluation_url = request_data['evaluation_url']
+            attachments = request_data.get('attachments', [])
+            secret = request_data.get('secret', '')
+            
+            logger.info(f"Handling Round 2 for task: {task}")
+            
+            # Find round 1 data
+            round1_request = db.query(AppRequest).filter(
+                AppRequest.task == task,
+                AppRequest.round_num == 1
+            ).first()
+            
+            round1_response = db.query(LLMResponse).filter(
+                LLMResponse.task == task,
+                LLMResponse.round_num == 1
+            ).first()
+            
+            if not round1_request or not round1_response:
+                logger.error(f"Round 1 data not found for task: {task}")
+                return False
+            
+            # Store round 2 request in database
+            app_request = AppRequest(
+                email=email,
+                task=task,
+                round_num=round_num,
+                nonce=nonce,
+                brief=brief,
+                checks=checks,
+                evaluation_url=evaluation_url,
+                attachments=attachments,
+                secret=secret
+            )
+            db.add(app_request)
+            db.commit()
+            
+            # Combine round 1 and round 2 briefs
+            combined_brief = f"""
+ORIGINAL REQUEST (Round 1):
+{round1_request.brief}
+
+REVISION REQUEST (Round 2):
+{brief}
+
+Please update the existing application to include the new requirements while maintaining all existing functionality.
+"""
+            
+            # Combine checks
+            combined_checks = round1_request.checks + checks
+            
+            # Create temporary directory for processing
+            with tempfile.TemporaryDirectory() as temp_dir:
+                # Process attachments
+                processed_attachments = self.process_attachments(attachments, temp_dir)
+                
+                # Generate updated code using AI with context
+                updated_code = self.generate_code_with_ai(combined_brief, processed_attachments, round_num)
+                
+                if not updated_code:
+                    logger.error("Failed to generate updated code")
+                    return False
+                
+                # Update existing repository (same repo as round 1)
+                repo_url = round1_response.repo_url
+                pages_url = round1_response.pages_url
+                
+                # Prepare files for update
+                files_to_update = {
+                    'index.html': updated_code,
+                    'README.md': self.create_readme(
+                        task, combined_brief, round_num, 
+                        repo_url, 
+                        pages_url
+                    )
+                }
+                
+                # Add processed attachments to files to update
+                for attachment in processed_attachments:
+                    try:
+                        with open(attachment['path'], 'rb') as f:
+                            file_content = f.read()
+                        
+                        if attachment['mime_type'].startswith('text/') or attachment['name'].endswith('.json'):
+                            files_to_update[attachment['name']] = base64.b64encode(file_content).decode('utf-8')
+                        else:
+                            files_to_update[attachment['name']] = base64.b64encode(file_content).decode('utf-8')
+                        
+                        logger.info(f"Added attachment to update: {attachment['name']} ({attachment['mime_type']})")
+                    except Exception as e:
+                        logger.error(f"Error adding attachment {attachment['name']} to update: {str(e)}")
+                
+                # Update existing repository
+                commit_sha = self.github_manager.update_existing_repo(
+                    repo_url, 
+                    files_to_update, 
+                    f"Round {round_num} update for task {task}"
+                )
+                
+                if not commit_sha:
+                    logger.error("Failed to update repository")
+                    return False
+                
+                # Store round 2 LLM response in database
+                llm_response = LLMResponse(
+                    task=task,
+                    round_num=round_num,
+                    generated_code=updated_code,
+                    repo_url=repo_url,  # Same as round 1
+                    pages_url=pages_url,  # Same as round 1
+                    commit_sha=commit_sha
+                )
+                db.add(llm_response)
+                db.commit()
+                
+                # Prepare evaluation notification
+                evaluation_data = {
+                    "email": email,
+                    "task": task,
+                    "round": round_num,
+                    "nonce": nonce,
+                    "repo_url": repo_url,  # Same as round 1
+                    "commit_sha": commit_sha,  # New commit
+                    "pages_url": pages_url  # Same as round 1
+                }
+                
+                # Notify evaluation endpoint
+                self.notify_evaluation(evaluation_url, evaluation_data)
+                
+                logger.info(f"Successfully updated app for task: {task}, round: {round_num}")
+                return True
+                
+        except Exception as e:
+            logger.error(f"Error in round 2: {str(e)}")
             return False
 
 def main():

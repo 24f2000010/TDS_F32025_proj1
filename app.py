@@ -15,14 +15,18 @@ from fastapi import FastAPI, HTTPException, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field, field_validator
 from dotenv import load_dotenv
+from database import create_tables
 
 # Load environment variables
 load_dotenv()
 
+# Initialize database tables
+create_tables()
+
 # Pydantic Models
 class Attachment(BaseModel):
-    filename: str
-    content: str
+    name: str
+    url: str
     content_type: Optional[str] = None
 
 class AppBuildRequest(BaseModel):

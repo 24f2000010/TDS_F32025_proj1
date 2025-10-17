@@ -110,6 +110,65 @@ class GitHubManager:
         """Get the GitHub Pages URL for a repository"""
         return f"https://{self.username}.github.io/{repo_name}/"
     
+    def update_existing_repo(self, repo_url, files, commit_message):
+        """Update existing repository with new files"""
+        try:
+            # Extract repo name from URL
+            repo_name = repo_url.split('/')[-1]
+            repo = self.github.get_repo(f"{self.username}/{repo_name}")
+            
+            commit_sha = None
+            success = True
+            
+            for file_path, content in files.items():
+                try:
+                    # Check if file exists
+                    try:
+                        existing_file = repo.get_contents(file_path)
+                        # File exists, update it
+                        repo.update_file(
+                            path=file_path,
+                            message=commit_message,
+                            content=content,
+                            sha=existing_file.sha
+                        )
+                        logger.info(f"Updated file: {file_path}")
+                    except GithubException:
+                        # File doesn't exist, create it
+                        repo.create_file(
+                            path=file_path,
+                            message=commit_message,
+                            content=content
+                        )
+                        logger.info(f"Created file: {file_path}")
+                    
+                    # Get the latest commit SHA
+                    commit_sha = repo.get_commits()[0].sha
+                    
+                except Exception as e:
+                    logger.error(f"Error updating file {file_path}: {str(e)}")
+                    success = False
+            
+            if success:
+                logger.info(f"Successfully updated repository: {repo_name}")
+                return commit_sha
+            else:
+                logger.error("Failed to update some files")
+                return None
+                
+        except Exception as e:
+            logger.error(f"Error updating repository: {str(e)}")
+            return None
+    
+    def get_repo_by_url(self, repo_url):
+        """Get repository object by URL"""
+        try:
+            repo_name = repo_url.split('/')[-1]
+            return self.github.get_repo(f"{self.username}/{repo_name}")
+        except Exception as e:
+            logger.error(f"Error getting repository by URL {repo_url}: {str(e)}")
+            return None
+    
     def get_latest_commit_sha(self, repo, branch="main"):
         """Get the latest commit SHA for a branch"""
         try:
