@@ -1,0 +1,21 @@
+{
+  "email": "student@example.com",
+  "secret": "your_student_secret_here",
+  "task": "example-task-001",
+  "round": 1,
+  "nonce": "example-nonce-123",
+  "brief": "Create a modern todo list application with add, edit, delete, and mark complete functionality. Use Bootstrap 5 for styling and make it fully responsive.",
+  "checks": [
+    "Todo list has input field for new tasks",
+    "Todo list has add button",
+    "Todo list displays all tasks",
+    "Each task has edit button",
+    "Each task has delete button",
+    "Each task has complete checkbox",
+    "Completed tasks are visually different",
+    "Design is responsive with Bootstrap 5",
+    "JavaScript functionality works properly"
+  ],
+  "evaluation_url": "https://httpbin.org/post",
+  "attachments": []
+}

@@ -1,0 +1,56 @@
+{
+  "api_url": "http://localhost:8000",
+  "student_secret": "hlo_iitm_student",
+  "student_email": "test@example.com",
+  "github_username": "your-github-username",
+  "test_apps": [
+    {
+      "name": "calculator",
+      "brief": "Create a modern calculator application with basic arithmetic operations, clear/delete functions, decimal support, Bootstrap 5 styling, responsive design, error handling, and professional UI",
+      "checks": [
+        "Has number buttons 0-9",
+        "Has operation buttons +, -, *, /",
+        "Has equals button",
+        "Has clear button",
+        "Has delete button",
+        "Shows current input/result",
+        "Arithmetic operations work correctly",
+        "Division by zero shows error",
+        "Decimal numbers supported",
+        "Bootstrap 5 styling applied",
+        "Responsive design works",
+        "Professional appearance"
+      ]
+    },
+    {
+      "name": "todo_list",
+      "brief": "Create a modern todo list application with add, edit, delete, mark complete functionality, local storage, Bootstrap 5 styling, and responsive design",
+      "checks": [
+        "Has input field for new tasks",
+        "Has add button",
+        "Displays all tasks",
+        "Each task has edit button",
+        "Each task has delete button",
+        "Each task has complete checkbox",
+        "Completed tasks are visually different",
+        "Bootstrap 5 styling applied",
+        "Responsive design works",
+        "Local storage persists data"
+      ]
+    },
+    {
+      "name": "weather_app",
+      "brief": "Create a weather application that displays current weather, 5-day forecast, search by city, temperature conversion, weather icons, Bootstrap 5 styling, and responsive design",
+      "checks": [
+        "Has city search input",
+        "Displays current weather",
+        "Shows 5-day forecast",
+        "Has temperature conversion",
+        "Shows weather icons",
+        "Bootstrap 5 styling applied",
+        "Responsive design works",
+        "Professional appearance"
+      ]
+    }
+  ]
+}
