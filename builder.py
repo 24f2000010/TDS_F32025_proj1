@@ -289,6 +289,25 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
                     )
                 }
                 
+                # Add processed attachments to files to commit
+                for attachment in processed_attachments:
+                    try:
+                        with open(attachment['path'], 'rb') as f:
+                            file_content = f.read()
+                        
+                        # PyGithub expects all content to be base64 encoded strings
+                        # For text files, we can decode first then encode, or encode directly
+                        if attachment['mime_type'].startswith('text/') or attachment['name'].endswith('.json'):
+                            # For text files, decode to string first, then encode to base64
+                            files_to_commit[attachment['name']] = base64.b64encode(file_content).decode('utf-8')
+                        else:
+                            # For binary files, encode directly to base64
+                            files_to_commit[attachment['name']] = base64.b64encode(file_content).decode('utf-8')
+                        
+                        logger.info(f"Added attachment to commit: {attachment['name']} ({attachment['mime_type']})")
+                    except Exception as e:
+                        logger.error(f"Error adding attachment {attachment['name']} to commit: {str(e)}")
+                
                 # Commit and push files
                 commit_sha = self.commit_and_push(
                     repo, 
