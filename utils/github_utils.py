@@ -45,6 +45,12 @@ class GitHubManager:
     def create_file(self, repo, path, content, message, branch="main"):
         """Create or update a file in the repository"""
         try:
+            # Ensure content is properly encoded
+            import base64
+            if isinstance(content, str):
+                # Content is already a string, encode it to base64
+                content = base64.b64encode(content.encode('utf-8')).decode('utf-8')
+            
             # Check if file exists
             try:
                 file = repo.get_contents(path, ref=branch)
@@ -115,6 +121,8 @@ class GitHubManager:
         try:
             # Extract repo name from URL
             repo_name = repo_url.split('/')[-1]
+            logger.info(f"Updating repository: {repo_name}")
+            logger.info(f"Full repo URL: {repo_url}")
             repo = self.github.get_repo(f"{self.username}/{repo_name}")
             
             commit_sha = None
