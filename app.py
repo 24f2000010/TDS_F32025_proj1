@@ -21,8 +21,8 @@ load_dotenv()
 
 # Pydantic Models
 class Attachment(BaseModel):
-    filename: str
-    content: str
+    name: str
+    url: str
     content_type: Optional[str] = None
 
 class AppBuildRequest(BaseModel):
@@ -235,3 +235,4 @@ if __name__ == '__main__':
         reload=debug,
         log_level="info"
     )
+
