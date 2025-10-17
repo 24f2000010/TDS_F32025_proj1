@@ -429,18 +429,25 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
             logger.info(f"Handling Round 2 for task: {task}")
             
             # Find round 1 data
+            logger.info(f"Looking for Round 1 data for task: {task}")
             round1_request = db.query(AppRequest).filter(
-                AppRequest.task == task,
+                AppRequest.task.ilike(task),
                 AppRequest.round_num == 1
             ).first()
             
             round1_response = db.query(LLMResponse).filter(
-                LLMResponse.task == task,
+                LLMResponse.task.ilike(task),
                 LLMResponse.round_num == 1
             ).first()
             
+            logger.info(f"Round 1 request found: {round1_request is not None}")
+            logger.info(f"Round 1 response found: {round1_response is not None}")
+            
             if not round1_request or not round1_response:
                 logger.error(f"Round 1 data not found for task: {task}")
+                # List all tasks in database for debugging
+                all_tasks = db.query(AppRequest.task).distinct().all()
+                logger.error(f"Available tasks in database: {[t[0] for t in all_tasks]}")
                 return False
             
             # Store round 2 request in database
@@ -457,6 +464,7 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
             )
             db.add(app_request)
             db.commit()
+            logger.info(f"Stored Round 2 request for task: {task}")
             
             # Combine round 1 and round 2 briefs
             combined_brief = f"""
@@ -478,7 +486,7 @@ Please update the existing application to include the new requirements while mai
                 processed_attachments = self.process_attachments(attachments, temp_dir)
                 
                 # Generate updated code using AI with context
-                updated_code = self.generate_code_with_ai(combined_brief, processed_attachments, round_num)
+                updated_code = self.generate_code_with_ai(combined_brief, attachments, round_num)
                 
                 if not updated_code:
                     logger.error("Failed to generate updated code")
@@ -487,6 +495,9 @@ Please update the existing application to include the new requirements while mai
                 # Update existing repository (same repo as round 1)
                 repo_url = round1_response.repo_url
                 pages_url = round1_response.pages_url
+                
+                logger.info(f"Using Round 1 repo_url: {repo_url}")
+                logger.info(f"Using Round 1 pages_url: {pages_url}")
                 
                 # Prepare files for update
                 files_to_update = {
