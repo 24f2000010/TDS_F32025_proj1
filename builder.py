@@ -338,13 +338,13 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
                 # Prepare files for commit
                 pages_url = self.github_manager.get_pages_url(repo.name)
                 files_to_commit = {
-                    'index.html': generated_code,
-                    'LICENSE': self.create_mit_license(),
-                    'README.md': self.create_readme(
+                    'index.html': base64.b64encode(generated_code.encode('utf-8')).decode('utf-8'),
+                    'LICENSE': base64.b64encode(self.create_mit_license().encode('utf-8')).decode('utf-8'),
+                    'README.md': base64.b64encode(self.create_readme(
                         task, brief, round_num, 
                         repo.html_url, 
                         pages_url
-                    )
+                    ).encode('utf-8')).decode('utf-8')
                 }
                 
                 # Add processed attachments to files to commit
@@ -501,12 +501,12 @@ Please update the existing application to include the new requirements while mai
                 
                 # Prepare files for update
                 files_to_update = {
-                    'index.html': updated_code,
-                    'README.md': self.create_readme(
+                    'index.html': base64.b64encode(updated_code.encode('utf-8')).decode('utf-8'),
+                    'README.md': base64.b64encode(self.create_readme(
                         task, combined_brief, round_num, 
                         repo_url, 
                         pages_url
-                    )
+                    ).encode('utf-8')).decode('utf-8')
                 }
                 
                 # Add processed attachments to files to update
