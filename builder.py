@@ -342,7 +342,7 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
                 processed_attachments = self.process_attachments(attachments, temp_dir)
                 
                 # Generate code using AI
-                generated_code = self.generate_code_with_ai(brief, attachments, round_num)
+                generated_code = self.generate_code_with_ai(brief, processed_attachments, round_num)
                 
                 if not generated_code:
                     logger.error("Failed to generate code")
@@ -505,7 +505,7 @@ Please update the existing application to include the new requirements while mai
                 processed_attachments = self.process_attachments(attachments, temp_dir)
                 
                 # Generate updated code using AI with context
-                updated_code = self.generate_code_with_ai(combined_brief, attachments, round_num)
+                updated_code = self.generate_code_with_ai(combined_brief, processed_attachments, round_num)
                 
                 if not updated_code:
                     logger.error("Failed to generate updated code")
@@ -556,6 +556,14 @@ Please update the existing application to include the new requirements while mai
                 if not commit_sha:
                     logger.error("Failed to update repository")
                     return False
+                
+                # Get the repository object to trigger GitHub Pages redeployment
+                repo_name = repo_url.split('/')[-1]
+                repo = self.github_manager.github.get_repo(f"{self.github_manager.username}/{repo_name}")
+                
+                # Trigger GitHub Pages redeployment
+                logger.info(f"Triggering GitHub Pages redeployment for {repo_name}")
+                self.enable_github_pages(repo)
                 
                 # Store round 2 LLM response in database
                 llm_response = LLMResponse(
@@ -619,9 +627,24 @@ Please update the existing application to include the new requirements while mai
             logger.info(f"Round 1 request found: {round1_request is not None}")
             logger.info(f"Round 1 response found: {round1_response is not None}")
             
-            # If Round 1 data is missing, fallback to creating new repo
+            # If Round 1 data is missing, try to find existing repository first
             if not round1_request or not round1_response:
-                logger.warning(f"Round 1 data not found for task: {task}, falling back to create new repo")
+                logger.warning(f"Round 1 data not found for task: {task}, trying to find existing repository")
+                
+                # Try to find existing repository by name
+                repo_name = f"app-{task}"
+                try:
+                    existing_repo = self.github_manager.get_repository(repo_name)
+                    if existing_repo:
+                        logger.info(f"Found existing repository: {repo_name}, proceeding with update")
+                        # Use the existing repository for update
+                        return self._update_existing_repo_with_fallback(
+                            existing_repo, request_data, processed_attachments
+                        )
+                except Exception as e:
+                    logger.error(f"Error finding existing repository: {str(e)}")
+                
+                logger.warning(f"No existing repository found, creating new repo as fallback")
                 
                 # Store round 2 request as if it's round 1 (fallback)
                 app_request = AppRequest(
@@ -644,7 +667,7 @@ Please update the existing application to include the new requirements while mai
                     processed_attachments = self.process_attachments(attachments, temp_dir)
                     
                     # Generate code using AI (treat as round 1)
-                    generated_code = self.generate_code_with_ai(brief, attachments, 1)
+                    generated_code = self.generate_code_with_ai(brief, processed_attachments, 1)
                     
                     if not generated_code:
                         logger.error("Failed to generate code in fallback")
@@ -740,6 +763,93 @@ Please update the existing application to include the new requirements while mai
                 
         except Exception as e:
             logger.error(f"Error in round 2 with fallback: {str(e)}")
+            return False
+
+    def _update_existing_repo_with_fallback(self, repo, request_data, processed_attachments):
+        """Update existing repository when Round 1 data is not found in database"""
+        try:
+            email = request_data['email']
+            task = request_data['task']
+            round_num = request_data['round']
+            nonce = request_data['nonce']
+            brief = request_data['brief']
+            checks = request_data['checks']
+            evaluation_url = request_data['evaluation_url']
+            secret = request_data.get('secret', '')
+            
+            logger.info(f"Updating existing repository {repo.name} with fallback data")
+            
+            # Generate code using AI (treat as round 2 enhancement)
+            generated_code = self.generate_code_with_ai(brief, processed_attachments, round_num)
+            
+            if not generated_code:
+                logger.error("Failed to generate code in fallback update")
+                return False
+            
+            # Prepare files for update
+            pages_url = self.github_manager.get_pages_url(repo.name)
+            files_to_update = {
+                'index.html': generated_code,
+                'LICENSE': self.create_mit_license(),
+                'README.md': self.create_readme(
+                    task, brief, round_num, 
+                    repo.html_url, 
+                    pages_url
+                )
+            }
+            
+            # Add processed attachments to files to update
+            for attachment in processed_attachments:
+                try:
+                    with open(attachment['path'], 'rb') as f:
+                        file_content = f.read()
+                    
+                    # Convert binary content to string for text files, keep binary for others
+                    if attachment['mime_type'].startswith('text/') or attachment['name'].endswith('.json'):
+                        # For text files, decode to string
+                        files_to_update[attachment['name']] = file_content.decode('utf-8')
+                    else:
+                        # For binary files, keep as bytes (github_utils will handle encoding)
+                        files_to_update[attachment['name']] = file_content
+                    
+                    logger.info(f"Added attachment to update: {attachment['name']} ({attachment['mime_type']})")
+                except Exception as e:
+                    logger.error(f"Error adding attachment {attachment['name']} to update: {str(e)}")
+            
+            # Update existing repository
+            commit_sha = self.github_manager.update_existing_repo(
+                repo.html_url, 
+                files_to_update, 
+                f"Round {round_num} update for task {task} (fallback)"
+            )
+            
+            if not commit_sha:
+                logger.error("Failed to update repository in fallback")
+                return False
+            
+            # Trigger GitHub Pages redeployment
+            logger.info(f"Triggering GitHub Pages redeployment for {repo.name} (fallback)")
+            self.enable_github_pages(repo)
+            
+            # Prepare evaluation data
+            evaluation_data = {
+                "email": email,
+                "task": task,
+                "round": round_num,
+                "nonce": nonce,
+                "repo_url": repo.html_url,
+                "commit_sha": commit_sha,
+                "pages_url": pages_url
+            }
+            
+            # Notify evaluation endpoint
+            self.notify_evaluation(evaluation_url, evaluation_data)
+            
+            logger.info(f"Successfully updated existing repository {repo.name} with fallback")
+            return True
+            
+        except Exception as e:
+            logger.error(f"Error updating existing repository with fallback: {str(e)}")
             return False
 
 def main():

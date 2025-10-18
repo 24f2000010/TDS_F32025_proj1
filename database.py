@@ -5,7 +5,7 @@ Database models and connection for local SQLite database on Render
 
 import os
 from datetime import datetime
-from sqlalchemy import create_engine, Column, Integer, String, Text, DateTime, JSON, ForeignKey
+from sqlalchemy import create_engine, Column, Integer, String, Text, DateTime, JSON, ForeignKey, UniqueConstraint
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker, relationship
 from dotenv import load_dotenv
@@ -13,19 +13,27 @@ from dotenv import load_dotenv
 # Load environment variables
 load_dotenv()
 
-# Use local SQLite database on Render machine
-# Store in /tmp directory for persistence across deployments
-db_path = "/tmp/app_builder.db"
+# Use local SQLite database
+# Store in current directory for local development, /opt/render/project/src for Render
+import tempfile
+if os.name == 'nt':  # Windows
+    db_path = "./app_builder.db"
+else:  # Unix/Linux (Render)
+    # Use Render's persistent project directory instead of /tmp
+    db_path = "/opt/render/project/src/app_builder.db"
 DATABASE_URL = f"sqlite:///{db_path}"
 
 print(f"Using local SQLite database at: {db_path}")
 
 # Create engine with connection pooling for better performance
+# Render-specific optimizations
 engine = create_engine(
     DATABASE_URL, 
     echo=False,
     pool_pre_ping=True,  # Verify connections before use
-    pool_recycle=300     # Recycle connections every 5 minutes
+    pool_recycle=300,    # Recycle connections every 5 minutes
+    pool_size=5,         # Limit pool size for Render free tier
+    max_overflow=0       # No overflow connections for Render free tier
 )
 
 # Create session factory
@@ -40,7 +48,7 @@ class AppRequest(Base):
     
     id = Column(Integer, primary_key=True, index=True)
     email = Column(String(255), nullable=False)
-    task = Column(String(255), unique=True, nullable=False, index=True)
+    task = Column(String(255), nullable=False, index=True)
     round_num = Column(Integer, nullable=False)
     nonce = Column(String(255), nullable=False)
     brief = Column(Text, nullable=False)
@@ -50,6 +58,9 @@ class AppRequest(Base):
     secret = Column(String(255), nullable=False)
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    
+    # Unique constraint on task + round_num combination
+    __table_args__ = (UniqueConstraint('task', 'round_num', name='uq_task_round'),)
     
     # Relationship to LLM responses
     llm_responses = relationship("LLMResponse", back_populates="app_request")

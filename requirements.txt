@@ -7,4 +7,3 @@ PyGithub==1.59.1
 python-dotenv==1.0.0
 mangum==0.17.0
 sqlalchemy==2.0.23
-
